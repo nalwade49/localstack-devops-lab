@@ -1,0 +1,25 @@
+# --- Security Protections ---
+*.pem
+*.key
+
+# --- LocalStack Ephemeral Data ---
+.localstack/
+data/
+volume/
+**/*.log
+logs/
+.env
+.env.local
+
+# --- Terraform Protections ---
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+
+# DO NOT IGNORE the dependency lock file
+!.terraform.lock.hcl

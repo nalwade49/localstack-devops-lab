@@ -1,0 +1,19 @@
+# Local .terraform directories (Contains the massive 300MB AWS provider binary)
+**/.terraform/*
+
+# State files (Contains sensitive, plaintext tracking data of your infrastructure)
+*.tfstate
+*.tfstate.*
+
+# Crash logs and personal variable inputs
+crash.log
+*.tfvars
+*.tfvars.json
+
+# Override files
+override.tf
+override.tf.json
+
+# DO NOT IGNORE the .terraform.lock.hcl file. 
+# It locks down your provider versions so your code doesn't break in the future!
+!.terraform.lock.hcl
