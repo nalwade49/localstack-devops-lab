@@ -1,0 +1,1 @@
+Welcome to the secure vault. This is public data accessible by junior devs.
