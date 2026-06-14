@@ -139,12 +139,12 @@ resource "aws_instance" "web_node_a" {
   subnet_id              = aws_subnet.private_subnet.id
   vpc_security_group_ids = [aws_security_group.private_app_sg.id]
 
-  user_data = base64encode(<<-EOF
+  user_data = <<-EOF
               #!/bin/bash
               echo "Hello from Node A in us-east-1a!" > index.html
               python3 -m http.server 80 &
               EOF
-  )
+  
 
   tags = {
     Name = "raj-web-node-a"
@@ -158,12 +158,12 @@ resource "aws_instance" "web_node_b" {
   subnet_id              = aws_subnet.private_subnet_b.id
   vpc_security_group_ids = [aws_security_group.private_app_sg.id]
 
-  user_data = base64encode(<<-EOF
+  user_data = <<-EOF
               #!/bin/bash
               echo "Hello from Node B in us-east-1b!" > index.html
               python3 -m http.server 80 &
               EOF
-  )
+  
 
   tags = {
     Name = "raj-web-node-b"
