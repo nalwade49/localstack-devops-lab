@@ -9,9 +9,10 @@ A self-driven infrastructure lab built after completing CDAC DITISS (Feb 2026), 
 | Layer | What's Built |
 |---|---|
 | **IaC** | Full Terraform codebase — providers, variables, outputs, resource dependencies |
-| **Networking** | Multi-AZ VPC, public/private subnets, IGW, NAT Gateway, route tables, NACLs |
-| **Compute** | Bastion host, private app server, two web nodes with user_data injection |
-| **Security** | Security group chaining, least-privilege IAM, S3 object-level access control |
+| **Networking** | Multi-AZ VPC (2 AZs), public/private subnets, IGW, **NAT Gateway**, route tables, NACLs |
+| **Compute** | Bastion host, private app server, two web nodes (one per AZ) with `user_data` injection |
+| **Load Balancing** | Bastion-hosted **Nginx reverse proxy** load-balancing across both web nodes (DIY ALB — LocalStack Community has no native ALB support) |
+| **Security** | Security group chaining (SSH + HTTP scoped to bastion-sg only), least-privilege IAM, S3 object-level access control |
 | **Storage** | S3 bucket with tiered access — public read for junior devs, admin-only objects |
 | **IAM** | Users via `for_each`, groups, inline + managed policies, group membership |
 
@@ -20,46 +21,47 @@ A self-driven infrastructure lab built after completing CDAC DITISS (Feb 2026), 
 ## Architecture
 
 ```
-Internet
-    │
-    ▼
-┌─────────────────────────────────────────────────────┐
-│                   VPC: 10.0.0.0/16                  │
-│                                                     │
-│  ┌──────────────────┐   ┌──────────────────┐        │
-│  │  Public Subnet A │   │  Public Subnet B │        │
-│  │  10.0.1.0/24     │   │  10.0.3.0/24     │        │
-│  │  (us-east-1a)    │   │  (us-east-1b)    │        │
-│  │                  │   │                  │        │
-│  │  [Bastion Host]  │   │  [NAT Gateway]   │        │
-│  │  raj-bastion-sg  │   │  + Elastic IP    │        │
-│  │  SSH:22, HTTP:80 │   │                  │        │
-│  └────────┬─────────┘   └──────────────────┘        │
-│           │ SG Chaining (SSH only from bastion-sg)  │
-│  ┌────────▼─────────┐   ┌──────────────────┐        │
-│  │  Private Subnet A│   │  Private Subnet B│        │
-│  │  10.0.2.0/24     │   │  10.0.4.0/24     │        │
-│  │  (us-east-1a)    │   │  (us-east-1b)    │        │
-│  │                  │   │                  │        │
-│  │  [Private App]   │   │  [Web Node B]    │        │
-│  │  [Web Node A]    │   │  Port 80 via     │        │
-│  │  Port 80 via     │   │  python http.srv │        │
-│  │  python http.srv │   │                  │        │
-│  └──────────────────┘   └──────────────────┘        │
-└─────────────────────────────────────────────────────┘
+                              Internet
+                                  │
+                                  ▼
+┌───────────────────────────────────────────────────────────────────┐
+│                        VPC: 10.0.0.0/16                            │
+│                                                                     │
+│  ┌──────────────────────┐         ┌──────────────────────┐         │
+│  │  Public Subnet A      │         │  Public Subnet B      │         │
+│  │  10.0.1.0/24          │         │  10.0.3.0/24          │         │
+│  │  (us-east-1a)         │         │  (us-east-1b)         │         │
+│  │                       │         │                       │         │
+│  │  [Bastion Host]       │         │  [NAT Gateway]        │         │
+│  │  Nginx reverse proxy  │         │  + Elastic IP         │         │
+│  │  SSH:22, HTTP:80      │         │                       │         │
+│  └───────────┬───────────┘         └───────────────────────┘         │
+│              │ SG Chaining (SSH + HTTP only from bastion-sg)         │
+│              │ Nginx proxy_pass → backend_nodes upstream             │
+│  ┌───────────▼───────────┐         ┌──────────────────────┐         │
+│  │  Private Subnet A      │         │  Private Subnet B      │         │
+│  │  10.0.2.0/24           │         │  10.0.4.0/24           │         │
+│  │  (us-east-1a)          │         │  (us-east-1b)          │         │
+│  │                        │         │                        │         │
+│  │  [Private App]         │         │  [Web Node B]          │         │
+│  │  [Web Node A]          │         │  Port 80 via           │         │
+│  │  Port 80 via           │         │  python http.srv       │         │
+│  │  python http.srv       │         │                        │         │
+│  └────────────────────────┘         └────────────────────────┘         │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 **Traffic flow:**
 - Public internet → Bastion (SSH port 22, HTTP port 80) via NACL + bastion-sg
-- Bastion → Private App (SSH only) via security group chaining — `private_app_sg` accepts port 22 exclusively from `bastion_sg` ID, not a CIDR range
-- ALB-sg → Private App (port 80) — backend nodes only reachable from ALB security group
-- Private subnets → Internet via NAT Gateway (outbound only, no inbound path)
+- Bastion → Web Node A / Web Node B (port 80 only) via security group chaining — `private_app_sg` accepts port 80 exclusively from `bastion_sg` ID, never from `0.0.0.0/0`. The bastion runs Nginx as a reverse proxy, load-balancing requests across both nodes via an `upstream backend_nodes` block populated with their private IPs at instance launch
+- Bastion → Private App (SSH only) via the same chaining pattern — `private_app_sg` accepts port 22 exclusively from `bastion_sg` ID, not a CIDR range
+- Private subnets (both AZs) → Internet via the single NAT Gateway in Public Subnet A (outbound only, no inbound path)
 
 ---
 
 ## Security Group Chaining
 
-The key security design in this lab — `private_app_sg` does not open SSH to `0.0.0.0/0` or even to the VPC CIDR. It references the bastion security group ID directly:
+The key security design in this lab — `private_app_sg` does not open SSH or HTTP to `0.0.0.0/0` or even to the VPC CIDR. Both ingress rules reference the bastion security group ID directly:
 
 ```hcl
 ingress {
@@ -68,9 +70,37 @@ ingress {
   protocol        = "tcp"
   security_groups = [aws_security_group.bastion_sg.id]
 }
+
+ingress {
+  from_port       = 80
+  to_port         = 80
+  protocol        = "tcp"
+  security_groups = [aws_security_group.bastion_sg.id]
+}
 ```
 
-This means even if an attacker reaches the VPC, they cannot SSH to private instances without going through the Bastion — and any instance removed from `bastion_sg` instantly loses that access.
+This means even if an attacker reaches the VPC, they cannot SSH or send HTTP traffic to private instances without going through the Bastion — and any instance removed from `bastion_sg` instantly loses both access paths.
+
+---
+
+## DIY Load Balancing — Nginx on the Bastion
+
+LocalStack Community doesn't emulate the ALB resource (it's a Pro-tier feature), so this lab implements the same pattern — a single public entry point distributing traffic across multiple private backends — using Nginx as a reverse proxy on the bastion instead:
+
+```nginx
+upstream backend_nodes {
+    server <web_node_a_private_ip>;
+    server <web_node_b_private_ip>;
+}
+server {
+    listen 80;
+    location / {
+        proxy_pass http://backend_nodes;
+    }
+}
+```
+
+The backend IPs are injected at instance launch via Terraform string interpolation (`${aws_instance.web_node_a.private_ip}`), so the config is generated fresh from the actual Terraform-managed state rather than hardcoded. Because this is LocalStack Community, the `user_data` script is stored as instance metadata but not executed by a real hypervisor — so this validates the Terraform interpolation and HCL correctness of the pattern, not a running Nginx process. The equivalent on real AWS would swap this block for an `aws_lb` + `aws_lb_target_group` + `aws_lb_listener` resource set, with `alb_sg` replacing `bastion_sg` as the chaining anchor.
 
 ---
 
@@ -182,7 +212,8 @@ This lab uses **LocalStack Community**, which simulates the AWS control plane �
 What this validates:
 - Terraform HCL correctness and resource dependency graph
 - Network topology — subnet placement, route table associations, NACL rules
-- Security group chaining logic
+- Security group chaining logic (SSH and HTTP scoped to bastion-sg)
+- Nginx config interpolation against live Terraform-managed private IPs
 - IAM policy evaluation and least-privilege enforcement
 - S3 bucket and object-level access boundaries
 
