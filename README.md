@@ -12,7 +12,7 @@ A self-driven infrastructure lab built after completing CDAC DITISS (Feb 2026), 
 | **Networking** | Multi-AZ VPC (2 AZs), public/private subnets, IGW, **NAT Gateway**, route tables, NACLs |
 | **Compute** | Bastion host, private app server, two web nodes (one per AZ) with `user_data` injection |
 | **Load Balancing** | Bastion-hosted **Nginx reverse proxy** load-balancing across both web nodes (DIY ALB — LocalStack Community has no native ALB support) |
-| **Security** | Security group chaining (SSH + HTTP scoped to bastion-sg only), least-privilege IAM, S3 object-level access control |
+| **Security** | Security group chaining (SSH + HTTP scoped to bastion-sg only), least-privilege IAM policies (designed and attached; live enforcement is a known LocalStack Community limitation — see IAM section), S3 object-level access control |
 | **Storage** | S3 bucket with tiered access — public read for junior devs, admin-only objects |
 | **IAM** | Users via `for_each`, groups, inline + managed policies, group membership |
 
@@ -125,12 +125,14 @@ The backend IPs are injected at instance launch via Terraform string interpolati
 }
 ```
 
-- Can list the bucket — knows it exists
-- Can read exactly one object — `public-data.txt`
-- Cannot read `admin-only.txt` — access denied at object level
-- Cannot write, delete, or access any other bucket
+- Designed to list the bucket — knows it exists
+- Designed to read exactly one object — `public-data.txt`
+- Designed to be denied `admin-only.txt` at the object level
+- Designed to be blocked from writing, deleting, or accessing any other bucket
 
 Users (`alice`, `bob`, `charlie`) are created dynamically using Terraform `for_each` — adding a new team member means editing one variable, not adding a new resource block.
+
+> **Known limitation:** LocalStack Community's `ENFORCE_IAM` flag has inconsistent enforcement upstream — tracked in [localstack/localstack#6173](https://github.com/localstack/localstack/issues/6173) and [#7183](https://github.com/localstack/localstack/issues/7183). In this lab, `alice`'s scoped credentials were tested directly against an action her policy does not grant (`s3:CreateBucket`) with both `ENFORCE_IAM=1` and `IAM_SOFT_MODE=1` set, and the action succeeded rather than being denied or logged as a violation. The policy itself is correctly written and attached (verifiable via `awslocal iam list-attached-user-policies --user-name alice`), but live deny-behavior could not be reproduced in Community edition on this version. This is a platform constraint, not a flaw in the Terraform policy logic.
 
 ---
 
@@ -193,14 +195,18 @@ awslocal s3 ls s3://raj-secure-vault/
 ## Verify IAM Least Privilege
 
 ```bash
-# Alice can list the vault
-awslocal s3 ls s3://raj-secure-vault/ --profile alice
+# Confirm alice's policy is attached as designed
+awslocal iam list-attached-user-policies --user-name alice
 
-# Alice can read the public file
+# Alice can list the vault and read the public file (works as designed)
+awslocal s3 ls s3://raj-secure-vault/ --profile alice
 awslocal s3 cp s3://raj-secure-vault/public-data.txt - --profile alice
 
-# Alice cannot read admin-only content (expect AccessDenied)
-awslocal s3 cp s3://raj-secure-vault/admin-only.txt - --profile alice
+# Alice attempting an out-of-scope action (e.g. s3:CreateBucket, which her
+# policy does not grant) — on real AWS or a fully enforcing LocalStack
+# Pro/Ultimate setup this returns AccessDenied. On LocalStack Community
+# 4.4.0 this currently succeeds due to the ENFORCE_IAM limitation noted above.
+awslocal s3 mb s3://should-be-denied-for-alice --profile alice
 ```
 
 ---
@@ -214,8 +220,10 @@ What this validates:
 - Network topology — subnet placement, route table associations, NACL rules
 - Security group chaining logic (SSH and HTTP scoped to bastion-sg)
 - Nginx config interpolation against live Terraform-managed private IPs
-- IAM policy evaluation and least-privilege enforcement
-- S3 bucket and object-level access boundaries
+- IAM policy authorship and attachment (structurally correct, least-privilege scoped)
+- S3 bucket and object structure
+
+What it does *not* validate in Community edition: live IAM deny-enforcement (see Known Limitation above) and EC2 `user_data` execution (no real hypervisor backing instances).
 
 ---
 
