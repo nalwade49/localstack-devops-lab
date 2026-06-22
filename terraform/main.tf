@@ -1,3 +1,16 @@
+module "network" {
+  source      = "./modules/network"
+  name_prefix = "raj"
+}
+
+module "compute" {
+  source              = "./modules/compute"
+  vpc_id              = module.network.vpc_id
+  public_subnet_id    = module.network.public_subnet_a_id
+  private_subnet_a_id = module.network.private_subnet_a_id
+  private_subnet_b_id = module.network.private_subnet_b_id
+}
+
 # Dynamic User Creation
 resource "aws_iam_user" "team" {
   for_each = var.team_members
@@ -9,7 +22,6 @@ resource "aws_iam_user" "admins" {
   name     = each.value
 }
 
-# Admin Group Logic
 resource "aws_iam_group" "admin_group" {
   name = "admin-team"
 }
@@ -25,7 +37,6 @@ resource "aws_iam_group_policy_attachment" "admin_policy_attach" {
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
 
-# --- Legacy Resources (Now Pure Logic) ---
 resource "aws_iam_group" "legacy_junior_dev" {
   name = var.legacy_sync.group_name
 }
@@ -38,7 +49,6 @@ resource "aws_iam_group_membership" "legacy_junior_dev_membership" {
 
 resource "aws_iam_policy" "legacy_alice_policy" {
   name = var.legacy_sync.policy_name
-
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -61,14 +71,10 @@ resource "aws_iam_user_policy_attachment" "legacy_alice_attachment" {
   policy_arn = aws_iam_policy.legacy_alice_policy.arn
 }
 
-# --- S3 Infrastructure (Import Targets) ---
-
-# 1. The Existing Vault Bucket
 resource "aws_s3_bucket" "vault" {
   bucket = "raj-secure-vault"
 }
 
-# 2. The Existing Public Data File
 resource "aws_s3_object" "public_file" {
   bucket       = aws_s3_bucket.vault.id
   key          = "public-data.txt"

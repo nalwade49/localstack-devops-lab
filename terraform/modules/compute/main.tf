@@ -1,8 +1,7 @@
-# 1. The Bastion Firewall (Public Entry Point)
 resource "aws_security_group" "bastion_sg" {
-  name        = "raj-bastion-sg"
+  name        = "${var.name_prefix}-bastion-sg"
   description = "Hardened gateway for SSH and Nginx Web access"
-  vpc_id      = aws_vpc.lab_vpc.id
+  vpc_id      = var.vpc_id
 
   ingress {
     from_port   = 22
@@ -11,7 +10,6 @@ resource "aws_security_group" "bastion_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # NEW: Open Port 80 for our DIY Load Balancer
   ingress {
     from_port   = 80
     to_port     = 80
@@ -27,18 +25,15 @@ resource "aws_security_group" "bastion_sg" {
   }
 }
 
-
-# 2. The Private Subnet Firewall (Security Group Chaining)
 resource "aws_security_group" "private_app_sg" {
-  name        = "raj-private-app-sg"
+  name        = "${var.name_prefix}-private-app-sg"
   description = "Strictly internal firewall rules"
-  vpc_id      = aws_vpc.lab_vpc.id
+  vpc_id      = var.vpc_id
 
   ingress {
     from_port       = 22
     to_port         = 22
     protocol        = "tcp"
-    # SECURITY GROUP CHAINING: Only allow access if the traffic originates from the Bastion SG itself!
     security_groups = [aws_security_group.bastion_sg.id]
   }
 
@@ -46,7 +41,6 @@ resource "aws_security_group" "private_app_sg" {
     from_port       = 80
     to_port         = 80
     protocol        = "tcp"
-    # Web nodes only accept HTTP from the bastion's Nginx reverse proxy, not the open internet
     security_groups = [aws_security_group.bastion_sg.id]
   }
 
@@ -58,15 +52,12 @@ resource "aws_security_group" "private_app_sg" {
   }
 }
 
-
-# 3. The Bastion Box (Now acting as an Nginx Load Balancer)
 resource "aws_instance" "bastion" {
-  ami                    = "ami-df5dbbf0"
-  instance_type          = "t2.micro"
-  subnet_id              = aws_subnet.public_subnet.id
+  ami                    = var.ami
+  instance_type          = var.instance_type
+  subnet_id              = var.public_subnet_id
   vpc_security_group_ids = [aws_security_group.bastion_sg.id]
 
-  # Dynamically injecting the backend IPs using Terraform syntax
   user_data = <<-EOF
               #!/bin/bash
               apt-get update -y
@@ -92,56 +83,51 @@ resource "aws_instance" "bastion" {
               EOF
 
   tags = {
-    Name = "raj-bastion-jumpbox"
+    Name = "${var.name_prefix}-bastion-jumpbox"
   }
 }
 
-# 4. The Secure Internal Server (Deployed in Private Subnet)
 resource "aws_instance" "private_app" {
-  ami                    = "ami-df5dbbf0"
-  instance_type          = "t2.micro"
-  subnet_id              = aws_subnet.private_subnet.id
+  ami                    = var.ami
+  instance_type          = var.instance_type
+  subnet_id              = var.private_subnet_a_id
   vpc_security_group_ids = [aws_security_group.private_app_sg.id]
 
   tags = {
-    Name = "raj-private-app-host"
+    Name = "${var.name_prefix}-private-app-host"
   }
 }
 
-# 5. Web Node A (Deployed in Private Subnet A)
 resource "aws_instance" "web_node_a" {
-  ami                    = "ami-df5dbbf0"
-  instance_type          = "t2.micro"
-  subnet_id              = aws_subnet.private_subnet.id
+  ami                    = var.ami
+  instance_type          = var.instance_type
+  subnet_id              = var.private_subnet_a_id
   vpc_security_group_ids = [aws_security_group.private_app_sg.id]
 
   user_data = <<-EOF
               #!/bin/bash
-              echo "Hello from Node A in us-east-1a!" > index.html
+              echo "Hello from Node A!" > index.html
               python3 -m http.server 80 &
               EOF
-  
 
   tags = {
-    Name = "raj-web-node-a"
+    Name = "${var.name_prefix}-web-node-a"
   }
 }
 
-# 6. Web Node B (Deployed in Private Subnet B)
 resource "aws_instance" "web_node_b" {
-  ami                    = "ami-df5dbbf0"
-  instance_type          = "t2.micro"
-  subnet_id              = aws_subnet.private_subnet_b.id
+  ami                    = var.ami
+  instance_type          = var.instance_type
+  subnet_id              = var.private_subnet_b_id
   vpc_security_group_ids = [aws_security_group.private_app_sg.id]
 
   user_data = <<-EOF
               #!/bin/bash
-              echo "Hello from Node B in us-east-1b!" > index.html
+              echo "Hello from Node B!" > index.html
               python3 -m http.server 80 &
               EOF
-  
 
   tags = {
-    Name = "raj-web-node-b"
+    Name = "${var.name_prefix}-web-node-b"
   }
 }
