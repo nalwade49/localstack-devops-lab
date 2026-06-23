@@ -25,29 +25,29 @@ A self-driven infrastructure lab built after completing CDAC DITISS (Feb 2026), 
                                   │
                                   ▼
 ┌───────────────────────────────────────────────────────────────────┐
-│                        VPC: 10.0.0.0/16                            │
-│                                                                     │
-│  ┌──────────────────────┐         ┌──────────────────────┐         │
-│  │  Public Subnet A      │         │  Public Subnet B      │         │
-│  │  10.0.1.0/24          │         │  10.0.3.0/24          │         │
-│  │  (us-east-1a)         │         │  (us-east-1b)         │         │
-│  │                       │         │                       │         │
-│  │  [Bastion Host]       │         │  [NAT Gateway]        │         │
-│  │  Nginx reverse proxy  │         │  + Elastic IP         │         │
-│  │  SSH:22, HTTP:80      │         │                       │         │
-│  └───────────┬───────────┘         └───────────────────────┘         │
-│              │ SG Chaining (SSH + HTTP only from bastion-sg)         │
-│              │ Nginx proxy_pass → backend_nodes upstream             │
-│  ┌───────────▼───────────┐         ┌──────────────────────┐         │
-│  │  Private Subnet A      │         │  Private Subnet B      │         │
-│  │  10.0.2.0/24           │         │  10.0.4.0/24           │         │
-│  │  (us-east-1a)          │         │  (us-east-1b)          │         │
-│  │                        │         │                        │         │
-│  │  [Private App]         │         │  [Web Node B]          │         │
-│  │  [Web Node A]          │         │  Port 80 via           │         │
-│  │  Port 80 via           │         │  python http.srv       │         │
-│  │  python http.srv       │         │                        │         │
-│  └────────────────────────┘         └────────────────────────┘         │
+│                        VPC: 10.0.0.0/16                           │
+│                                                                   │
+│  ┌─────────────────────-─┐         ┌──────────────────────-┐      │
+│  │  Public Subnet A      │         │  Public Subnet B      │      │
+│  │  10.0.1.0/24          │         │  10.0.3.0/24          │      │
+│  │  (us-east-1a)         │         │  (us-east-1b)         │      │
+│  │                       │         │                       │      │
+│  │  [Bastion Host]       │         │  [NAT Gateway]        │      │
+│  │  Nginx reverse proxy  │         │  + Elastic IP         │      │
+│  │  SSH:22, HTTP:80      │         │                       │      │
+│  └───────────┬───────────┘         └───────────────────────┘      │
+│              │ SG Chaining (SSH + HTTP only from bastion-sg)      │
+│              │ Nginx proxy_pass → backend_nodes upstream          │
+│  ┌───────────▼───────────┐         ┌──────────────────────┐       │
+│  │  Private Subnet A     │         │  Private Subnet B    │       │
+│  │  10.0.2.0/24          │         │  10.0.4.0/24         │       │
+│  │  (us-east-1a)         │         │  (us-east-1b)        │       │
+│  │                       │         │                      │       │
+│  │  [Private App]        │         │  [Web Node B]        │       │
+│  │  [Web Node A]         │         │  Port 80 via         │       │
+│  │  Port 80 via          │         │  python http.srv     │       │
+│  │  python http.srv      │         │                      │       │
+│  └───────────────────────┘         └──────────────────────┘       │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
@@ -77,7 +77,7 @@ modules/
 
 The root `main.tf` wires them together, passing network outputs into compute inputs:
 
-``` hcl
+```hcl
 module "network" {
   source      = "./modules/network"
   name_prefix = "raj"
@@ -100,7 +100,7 @@ To deploy a second environment, pass different CIDRs and a different `name_prefi
 
 Availability zones are resolved dynamically via a data source instead of hardcoded strings:
 
-``` hcl
+```hcl
 data "aws_availability_zones" "available" {
   state = "available"
 }
@@ -121,7 +121,7 @@ Terraform state is stored in an S3 backend (`raj-tf-state`) with versioning enab
 
 **Verified on LocalStack 4.4.0:**
 
-``` bash
+```bash
 awslocal s3api list-object-versions --bucket raj-tf-state
 # Shows terraform.tfstate (IsLatest: true)
 # Shows terraform.tfstate.tflock with a DeleteMarker (IsLatest: true)
@@ -139,7 +139,7 @@ terraform/    ← all projects store state inside that bucket via key isolation
 
 The bootstrap bucket has `prevent_destroy = true` to guard against accidental `terraform destroy` wiping every project's state simultaneously:
 
-``` hcl
+```hcl
 resource "aws_s3_bucket" "tf_state" {
   bucket = "raj-tf-state"
 
@@ -159,7 +159,7 @@ resource "aws_s3_bucket" "tf_state" {
 
 `private_app_sg` does not open SSH or HTTP to `0.0.0.0/0` or even to the VPC CIDR. Both ingress rules reference the bastion security group ID directly:
 
-``` hcl
+```hcl
 ingress {
   from_port       = 22
   to_port         = 22
@@ -183,7 +183,7 @@ Even if an attacker reaches the VPC, they cannot SSH or send HTTP to private ins
 
 LocalStack Community doesn't emulate ALB (Pro-tier feature). This lab implements the same pattern using Nginx as a reverse proxy on the bastion:
 
-``` nginx
+```nginx
 upstream backend_nodes {
     server <web_node_a_private_ip>;
     server <web_node_b_private_ip>;
@@ -204,7 +204,7 @@ Backend IPs are injected at instance launch via Terraform string interpolation. 
 
 **alice** (junior dev) gets the minimum necessary:
 
-``` json
+```json
 {
   "Statement": [
     {
@@ -273,7 +273,7 @@ localstack-devops-lab/
 
 **Prerequisites:** Docker, Terraform >= 1.15, `awslocal` CLI wrapper
 
-``` bash
+```bash
 # Start LocalStack
 docker-compose up -d
 
@@ -311,7 +311,7 @@ awslocal s3api list-object-versions --bucket raj-tf-state
 
 ## Verify IAM Least Privilege
 
-``` bash
+```bash
 # Confirm alice's policy is attached
 awslocal iam list-attached-user-policies --user-name alice
 
